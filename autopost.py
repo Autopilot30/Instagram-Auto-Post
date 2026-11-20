@@ -15,8 +15,8 @@ ROOT = pathlib.Path(__file__).parent
 POSTS = ROOT / "posts"
 MAX_POSTS = int(os.getenv("MAX_POSTS", "30"))
 MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-5-5")
-GEMINI_MODELS = [m for m in [os.getenv("GEMINI_MODEL", ""), "gemini-flash-latest",
-                 "gemini-2.5-flash", "gemini-2.5-flash-lite"] if m]
+GEMINI_MODELS = [m for m in [os.getenv("GEMINI_MODEL", ""), "gemini-3.8-flash",
+                 "gemini-3.5-flash-lite", "gemini-flash-latest"] if m]
 HANDLE = "@69.co.in"
 GV = os.getenv("GRAPH_VERSION", "").strip()
 GRAPH = "https://graph.facebook.com/" + (GV + "/" if GV else "")
