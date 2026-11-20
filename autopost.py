@@ -15,7 +15,8 @@ ROOT = pathlib.Path(__file__).parent
 POSTS = ROOT / "posts"
 MAX_POSTS = int(os.getenv("MAX_POSTS", "30"))
 MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-5-5")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
+GEMINI_MODELS = [m for m in [os.getenv("GEMINI_MODEL", ""), "gemini-flash-latest",
+                 "gemini-2.5-flash", "gemini-2.5-flash-lite"] if m]
 HANDLE = "@69.co.in"
 GV = os.getenv("GRAPH_VERSION", "").strip()
 GRAPH = "https://graph.facebook.com/" + (GV + "/" if GV else "")
@@ -66,21 +67,30 @@ Return ONLY JSON: {"topic": str, "slides": [str x7], "caption": str}"""
 def llm_json(system, user):
     """Uses Gemini (free tier) if GEMINI_API_KEY is set, else Claude."""
     if os.getenv("GEMINI_API_KEY"):
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
         body = {"systemInstruction": {"parts": [{"text": system}]},
                 "contents": [{"role": "user", "parts": [{"text": user}]}],
                 "generationConfig": {"responseMimeType": "application/json"}}
-        for attempt in range(4):  # free tier can rate-limit; retry
-            r = requests.post(url, json=body, timeout=120,
-                              headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"]})
-            if r.status_code in (429, 503):
-                time.sleep(20 * (attempt + 1)); continue
-            if not r.ok:
-                raise SystemExit(f"Gemini API error {r.status_code}: {r.text}")
-            txt = r.json()["candidates"][0]["content"]["parts"][0]["text"]
-            break
-        else:
-            raise SystemExit("Gemini API busy/rate-limited, try again later.")
+        txt = None
+        for model in GEMINI_MODELS:           # try next model if one is slow/unavailable
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+            for attempt in range(2):
+                try:
+                    r = requests.post(url, json=body, timeout=60,
+                                      headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"]})
+                except requests.exceptions.RequestException as e:
+                    print(f"[{model}] network/timeout: {type(e).__name__}"); continue
+                if r.status_code in (429, 500, 503):
+                    print(f"[{model}] busy {r.status_code}, waiting"); time.sleep(15); continue
+                if not r.ok:
+                    print(f"[{model}] error {r.status_code}: {r.text[:300]}"); break
+                try:
+                    txt = r.json()["candidates"][0]["content"]["parts"][0]["text"]
+                except (KeyError, IndexError):
+                    print(f"[{model}] empty answer: {r.text[:300]}"); continue
+                print(f"[{model}] ok"); break
+            if txt: break
+        if not txt:
+            raise SystemExit("All Gemini models failed. See messages above.")
     else:
         import anthropic
         r = anthropic.Anthropic().messages.create(model=MODEL, max_tokens=1500, system=system,
@@ -209,4 +219,3 @@ def cmd_publish():
 
 if __name__ == "__main__":
     {"generate": cmd_generate, "publish": cmd_publish}[sys.argv[1]]()
-  
