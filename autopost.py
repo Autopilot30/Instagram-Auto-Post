@@ -4,18 +4,18 @@
 Usage:
   python autopost.py generate   # Claude writes a post + slide images are created
   python autopost.py publish    # latest unpublished post goes to Instagram
-Env vars: ANTHROPIC_API_KEY, IG_USER_ID, IG_ACCESS_TOKEN (secrets);
+Env vars: GEMINI_API_KEY (free) or ANTHROPIC_API_KEY, IG_USER_ID, IG_ACCESS_TOKEN (secrets);
           MAX_POSTS (default 30), CLAUDE_MODEL, GRAPH_VERSION (optional)
 """
 import os, sys, json, time, random, pathlib
 import requests
-import anthropic
 from PIL import Image, ImageDraw, ImageFont
 
 ROOT = pathlib.Path(__file__).parent
 POSTS = ROOT / "posts"
 MAX_POSTS = int(os.getenv("MAX_POSTS", "30"))
 MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-5-5")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
 HANDLE = "@69.co.in"
 GV = os.getenv("GRAPH_VERSION", "").strip()
 GRAPH = "https://graph.facebook.com/" + (GV + "/" if GV else "")
@@ -63,22 +63,41 @@ Rules:
 - Caption: 2-3 lines in Hindi + 8 relevant hashtags.
 Return ONLY JSON: {"topic": str, "slides": [str x7], "caption": str}"""
 
-def claude_json(client, system, user):
-    r = client.messages.create(model=MODEL, max_tokens=1500, system=system,
-                               messages=[{"role": "user", "content": user}])
-    txt = "".join(b.text for b in r.content if b.type == "text").strip()
-    txt = txt.replace("```json", "").replace("```", "").strip()
+def llm_json(system, user):
+    """Uses Gemini (free tier) if GEMINI_API_KEY is set, else Claude."""
+    if os.getenv("GEMINI_API_KEY"):
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+        body = {"systemInstruction": {"parts": [{"text": system}]},
+                "contents": [{"role": "user", "parts": [{"text": user}]}],
+                "generationConfig": {"responseMimeType": "application/json"}}
+        for attempt in range(4):  # free tier can rate-limit; retry
+            r = requests.post(url, json=body, timeout=120,
+                              headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"]})
+            if r.status_code in (429, 503):
+                time.sleep(20 * (attempt + 1)); continue
+            if not r.ok:
+                raise SystemExit(f"Gemini API error {r.status_code}: {r.text}")
+            txt = r.json()["candidates"][0]["content"]["parts"][0]["text"]
+            break
+        else:
+            raise SystemExit("Gemini API busy/rate-limited, try again later.")
+    else:
+        import anthropic
+        r = anthropic.Anthropic().messages.create(model=MODEL, max_tokens=1500, system=system,
+                                   messages=[{"role": "user", "content": user}])
+        txt = "".join(b.text for b in r.content if b.type == "text")
+    txt = txt.strip().replace("```json", "").replace("```", "").strip()
     return json.loads(txt)
 
-def make_post(client):
+def make_post():
     done = history_topics()
     for attempt in range(4):
         seed = random.choice(SEEDS)
-        post = claude_json(client, SYSTEM,
+        post = llm_json(SYSTEM,
             f"Inspiration (you may choose a different angle): {seed}\n"
             f"Do NOT repeat these earlier topics: {done}")
         assert len(post["slides"]) == 7, "need 7 slides"
-        review = claude_json(client,
+        review = llm_json(
             'You are a strict fact-checker. Return ONLY JSON {"ok": bool, "reason": str}. '
             "ok=false if the text has false or doubtful facts, guaranteed-income promises, "
             "investment advice, or is not understandable Hindi.",
@@ -135,8 +154,7 @@ def cmd_generate():
         print(f"{MAX_POSTS} posts done. Nothing to do."); return
     if existing and not json.loads((existing[-1] / "post.json").read_text())["published"]:
         print("Previous post is still unpublished; skipping generate."); return
-    client = anthropic.Anthropic()
-    post = make_post(client)
+    post = make_post()
     n = len(existing) + 1
     folder = POSTS / f"{n:03d}"; folder.mkdir()
     palette = random.choice(PALETTES)
@@ -191,4 +209,4 @@ def cmd_publish():
 
 if __name__ == "__main__":
     {"generate": cmd_generate, "publish": cmd_publish}[sys.argv[1]]()
-      
+  
