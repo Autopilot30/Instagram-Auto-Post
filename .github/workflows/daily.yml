@@ -26,6 +26,7 @@ jobs:
       - name: Generate post
         run: python autopost.py generate
         env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       - name: Save images to repo
         run: |
@@ -48,4 +49,3 @@ jobs:
           git add posts
           git commit -m "published" || echo "nothing to commit"
           git push
-          
