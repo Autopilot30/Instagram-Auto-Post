@@ -1,0 +1,51 @@
+name: daily-post
+
+on:
+  schedule:
+    - cron: "30 13 * * *"   # roz 7:00 PM IST
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "true = sirf post banao, Instagram pe mat daalo"
+        default: "true"
+
+permissions:
+  contents: write
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Hindi fonts
+        run: sudo apt-get update && sudo apt-get install -y fonts-noto-core libfribidi0 libharfbuzz0b
+      - run: pip install -r requirements.txt
+      - name: Generate post
+        run: python autopost.py generate
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      - name: Save images to repo
+        run: |
+          git config user.name "autopost-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add posts
+          git commit -m "new post" || echo "nothing to commit"
+          git push
+      - name: Publish to Instagram
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        run: |
+          sleep 30
+          python autopost.py publish
+        env:
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+      - name: Save status
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        run: |
+          git add posts
+          git commit -m "published" || echo "nothing to commit"
+          git push
+          
