@@ -97,25 +97,34 @@ def llm_json(system, user):
                                    messages=[{"role": "user", "content": user}])
         txt = "".join(b.text for b in r.content if b.type == "text")
     txt = txt.strip().replace("```json", "").replace("```", "").strip()
-    return json.loads(txt)
+    start = txt.find("{")
+    if start < 0:
+        raise ValueError("no JSON in model answer: " + txt[:200])
+    obj, _ = json.JSONDecoder().raw_decode(txt[start:])  # ignores any extra text after the JSON
+    return obj
 
 def make_post():
     done = history_topics()
-    for attempt in range(4):
-        seed = random.choice(SEEDS)
-        post = llm_json(SYSTEM,
-            f"Inspiration (you may choose a different angle): {seed}\n"
-            f"Do NOT repeat these earlier topics: {done}")
-        assert len(post["slides"]) == 7, "need 7 slides"
-        review = llm_json(
-            'You are a strict fact-checker. Return ONLY JSON {"ok": bool, "reason": str}. '
-            "ok=false if the text has false or doubtful facts, guaranteed-income promises, "
-            "investment advice, or is not understandable Hindi.",
-            json.dumps(post, ensure_ascii=False))
+    for attempt in range(5):
+        try:
+            seed = random.choice(SEEDS)
+            post = llm_json(SYSTEM,
+                f"Inspiration (you may choose a different angle): {seed}\n"
+                f"Do NOT repeat these earlier topics: {done}")
+            if len(post["slides"]) != 7 or not post.get("caption"):
+                raise ValueError("need 7 slides and a caption")
+            review = llm_json(
+                'You are a strict fact-checker. Return ONLY JSON {"ok": bool, "reason": str}. '
+                "ok=false if the text has false or doubtful facts, guaranteed-income promises, "
+                "investment advice, or is not understandable Hindi.",
+                json.dumps(post, ensure_ascii=False))
+        except (ValueError, KeyError, TypeError) as e:   # bad/odd model output -> retry
+            print(f"Attempt {attempt + 1}: bad model output ({type(e).__name__}: {e})")
+            continue
         if review.get("ok"):
             return post
         print("Rejected by reviewer:", review.get("reason"))
-    raise SystemExit("Could not produce a safe post after 4 tries.")
+    raise SystemExit("Could not produce a safe post after 5 tries.")
 
 # ---------- Images ----------
 def wrap(draw, text, font, max_w):
